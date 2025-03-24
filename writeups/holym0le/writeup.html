@@ -470,7 +470,7 @@ if (n >= '[XX]') {
   "$RED$--- [DEBUG] ---\n$FG$"; // <= just after the call to string format
 </code>
 </pre>
-In the TempleOS calling conventions all arguments are pushed to the stack and 
+In the TempleOS calling conventions for all arguments are pushed to the stack and 
 it's the caller's responsibility to clean up the stack. The string formatting 
 function takes two arguments, the format string and the number of arguments. 
 We can see this by disassembling around the gadget:
@@ -484,7 +484,10 @@ We can see this by disassembling around the gadget:
 </pre>
 `0x3677be80` points to the `"$RED$---- .."` string and `0x18556` points to the 
 string format function. The add `rsp,0x10` resets the stack after the arguments 
-have been pushed. You may be wondering why this gadget is useful and how this 
+have been pushed. Note that this happens only for variadic functions, for non-
+variadic functions the callee cleans up the stack.
+
+You may be wondering why this gadget is useful and how this 
 doesn't crash the program. But first observe the stack state when we hit the 
 breakpoint at the jumptable switch after we've jumped to the add rsp gadget:
 
@@ -516,8 +519,7 @@ There is a `pop rsi` instruction, moving the pointer to our controlled input int
 `rsi` before returning. `DoCommand` is called in an infinite loop and so the only 
 thing happening after returning is a `jmp` instruction and another call to `DoCommand`. 
 The function prologue of `DoCommand` makes space on the stack for the local variables 
-and then pushes `rsi` to the stack!. (I'm not sure what `rsi` tracks, I'm assuming 
-some bookkepping informatoin on the process state).
+and then pushes `rsi` to the stack!. (`rsi` is callee saved and tracks the `n` variable).
 <pre style="font-size: 6pt; font-variant-ligatures: none; background-color: #f4f4f4; padding: 10px; border-radius: 5px; border: 1px solid #ccc; overflow-x: auto;">
 <code>
 0x3677bc2a:  mov    ebp,esp
