@@ -547,10 +547,10 @@ the file `~/Banner.TXT` and writes the contents to serial. If we could jump in t
 middle of the `Banner` function such that the argument to `DocRead` was `~/Flag.TXT` 
 we'd be able to obtain the flag.
 
-Unfortunately our shellcode doesn't know where the `Banner` function is I found the 
-address to be fairly random. So we'll implement the scanning we used to find the 
-`DoCommand` function in the shellcode. I won't explain too much, the comments should 
-be self explanatory:
+Unfortunately our shellcode doesn't know where the `Banner` function is and the  
+address seems to be fairly random. So we'll implement the scanning we used to 
+find the `DoCommand` function in the shellcode. I won't explain too much, the 
+comments should be self explanatory:
 <pre style="font-size: 6pt; font-variant-ligatures: none; background-color: #f4f4f4; padding: 10px; border-radius: 5px; border: 1px solid #ccc; overflow-x: auto;">
 <code>
 [BITS 64]
