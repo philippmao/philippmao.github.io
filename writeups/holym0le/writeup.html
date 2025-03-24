@@ -417,8 +417,13 @@ b *0x3677bd35
 <span class=cB0>
 I did not use the builtin debugger, in retrospect probably would have been 
 helpful since it has builtin functions to resolve the address of functions, 
-but I had issues with the display/VNC. I was planning to write a gdb plugin 
-to do the `Uf` command in gdb, let's see if I get around to it...
+but I had issues with the display/VNC. 
+
+Since the CTF I wrote a gdb plugin that resolves a symbol in templeOS:
+</span><a href="templeos_uf.py"><span class=cB0>GDB Plugin</span></a><span class=cB0>.
+Load it into gdb with `source templeos_uf.py` and resolve the address of 
+a symbol with `Uf DoCommand`.
+
 </span>
 <span class=cB5><h2><center>Jumping To Shellcode</center></h2></span>
 <span class=cB0>
