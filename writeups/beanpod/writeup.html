@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Memory Mapping in Unicorn</title>
+
+  <!-- Prism.js syntax highlighting -->
+  <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-armasm.min.js"></script>
+
+  <style>
+    body {
+      font-family: verdana, helvetica, sans-serif;
+      background: #cfccc3 url(bgtransback.png) repeat-x scroll 0 0;
+      color: #000000;
+      margin: 0;
+      padding: 0;
+    }
+
+    #container {
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 20px 40px;
+    }
+
+    h1, h2, h3 {
+      color: #003366;
+    }
+
+    a {
+      color: #003366;
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    p {
+      line-height: 1.5;
+      font-size: 14px;
+    }
+
+    pre {
+      border: 1px solid #ccc;
+      padding: 10px;
+      overflow-x: auto;
+      background: #f8f8f8;
+      font-size: 13px;
+    }
+
+    blockquote {
+      border-left: 4px solid #ccc;
+      padding-left: 1em;
+      margin-left: 0;
+      color: #333;
+      font-style: italic;
+    }
+
+    hr {
+      border: 0;
+      border-top: 1px solid #ccc;
+      margin: 2em 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <h1>Memory Mapping in Unicorn Engine</h1>
+    <p><strong>Author:</strong> You</p>
+    <p><strong>Date:</strong> April 2025</p>
+
+    <hr>
+
+    <h2>Introduction</h2>
+    <p>While emulating a Trusted Application, it's common to encounter memory errors even when mappings appear correct. Here's how to debug this using Unicorn Engine.</p>
+
+    <h2>Typical Failure: UC_ERR_WRITE_UNMAPPED</h2>
+    <p>This instruction may trigger a crash:</p>
+
+    <pre><code class="language-armasm">str r0, [r4]</code></pre>
+
+    <p>It means a write to an unmapped address pointed to by <code>r4</code>.</p>
+
+    <h2>Ensuring Mappings Are Present</h2>
+    <p>Make sure to map memory explicitly before accessing:</p>
+
+    <pre><code class="language-python">
+emu.mem_map(0x440000, 0x1000, UC_PROT_READ | UC_PROT_WRITE)
+emu.mem_write(0x440020, b'\x00' * 4)
+    </code></pre>
+
+    <h2>Hooking Memory Faults</h2>
+    <p>Use hooks to trace issues at runtime:</p>
+
+    <pre><code class="language-python">
+def hook_mem_fault(uc, access, address, size, value, user_data):
+    print(f"Memory fault at 0x{address:x}")
+
+emu.hook_add(UC_HOOK_MEM_WRITE_UNMAPPED, hook_mem_fault)
+    </code></pre>
+
+    <h2>Conclusion</h2>
+    <blockquote>
+      "When Unicorn says 'unmapped', it means it — even if you *think* you've mapped it."
+    </blockquote>
+
+    <p>See more on <a href="https://www.unicorn-engine.org/">Unicorn's official site</a>.</p>
+  </div>
+</body>
+</html>
