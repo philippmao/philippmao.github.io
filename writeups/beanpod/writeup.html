@@ -5,10 +5,10 @@
   <title>Memory Mapping in Unicorn</title>
 
   <!-- Prism.js syntax highlighting -->
-  <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism.css" rel="stylesheet" />
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-armasm.min.js"></script>
+  <link href="prism.css" rel="stylesheet" />
+  <script src="prism.js"></script>
+  <script src="prism-python.min.js"></script>
+  <script src="prism-armasm.min.js"></script>
 
   <style>
     body {
@@ -64,23 +64,143 @@
       border-top: 1px solid #ccc;
       margin: 2em 0;
     }
+table {
+      border-collapse: collapse;
+      width: 60%;
+      margin: 20px;
+    }
+    th, td {
+      border: 1px solid #333;
+      padding: 8px;
+      text-align: left;
+    }
+    th {
+      background-color: #f2f2f2;
+    }
+
   </style>
 </head>
 <body>
   <div id="container">
-    <h1>Memory Mapping in Unicorn Engine</h1>
-    <p><strong>Author:</strong> You</p>
+    <h1>From S-EL0 to S-EL3, BeanPod TEE Exploitation</h1>
+    <p><strong>Author:</strong> Philipp Mao</p>
     <p><strong>Date:</strong> April 2025</p>
 
-    <hr>
+    <p>While working on the <a href="https://www.usenix.org/system/files/usenixsecurity24-busch-tea.pdf">Rollback</a> and <a href="https://www.usenix.org/system/files/usenixsecurity24-busch-globalconfusion.pdf">GlobalConfusion</a> paper (both studies on the prevalence of common TA vulnerabilities) we (me and <a href="https://mbusch.io/">Marcel(@0ddc0de)</a>) accumulated a number of vulnerable TAs. For one of these TAs, specifically the so-called keyinstall TA on the Xiaomi Note 11s, Marcel wrote a stable exploit that achieved code execution as the TA. After a delay of about one year, I decided to take his exploit and see if I could escalate privileges from the TA to compromise the TEE. I chose that TA not only because of the availability of the exploit but also because the used TEE (called BeanPod) had not been previously compromised.
 
-    <h2>Introduction</h2>
-    <p>While emulating a Trusted Application, it's common to encounter memory errors even when mappings appear correct. Here's how to debug this using Unicorn Engine.</p>
+    <p>This blog is a writeup of the research I did to escalate privileges and compromise the BeanPod TEE, which was done in summer 2024. With the bug I found I was able to escalate privileges from S-EL0 (code execution in a Trusted Application) to S-EL3 (arbitrary physical memory read/write). I will mainly be talking about reverse engineering and writing shellcode for interacting with arm32 IPC servers running on top of the fiasco(L4Re) microkernel.
 
-    <h2>Typical Failure: UC_ERR_WRITE_UNMAPPED</h2>
-    <p>This instruction may trigger a crash:</p>
+    <h2>Background</h2>
 
-    <pre><code class="language-armasm">str r0, [r4]</code></pre>
+    <p>Modern Android devices use trusted execution environments (TEEs) to store sensitive user data (biometrics, drm keys etc) and restrict access to peripherals. This technology has so far been based on ARM Trustzone, which allows partitioning execution contexts into normal and secure world. Android apps, the Android framework run in the normal world at EL0 (userspace), while the linux kernel runs at N-EL1 (normal world exception level 1). 
+
+    <p>The components running in the secure world are trusted applications (TAs) at S-EL0. Each TA implements a specific use case from the TEE (there is for example the keymaster TA responsible for managing secure storage) and exposes that functionality to the normal world. At S-EL1 runs the TEE OS, which is responsible for running and seperating the different TAs. Finally at S-EL3 runs the secure monitor, the component responsible for orchestrating interaction between the normal and secure world. The code running inside the TEE is proprietary and comes either from the SOC or a TEE vendor. Below is a table with various SOCs and TEE implementations. This blog will be about xiaomi with the BeanPod TEE.
+
+<table>
+    <tr>
+      <th>Vendor</th>
+      <th>SOC</th>
+      <th>TEE</th>
+    </tr>
+    <tr>
+      <td>Xiaomi</td>
+      <td>MediaTek</td>
+      <td><b>BeanPod (before ~2024)</b></td>
+    </tr>
+    <tr>
+      <td>Xiaomi</td>
+      <td>MediaTek</td>
+      <td>MITEE (after ~2024)</td>
+    </tr>
+    <tr>
+      <td>Samsung</td>
+      <td>Exynos</td>
+      <td>TEEGRIS</td>
+    </tr>
+    <tr>
+      <td>Samsung/Xiaomi</td>
+      <td>QualComm</td>
+      <td>QSEE</td>
+    </tr>
+  </table>
+
+    <p>The main premise of the TEE is that only signed aka "trusted" code is run in there. Rooting a phone gives S-EL1 code execution but that does not give access to the TEE. 
+
+    <p>The first step to compromising the TEE is to get code execution in a TA over the API exposed to the normal world, usually by exploiting a bug in the TA. Which exactly how Marcel achieved code execution at S-EL0. I will not discuss the bug/exploitation process of the vulnerable TA for the sake of brevity. The bug and exploitation process is presented in this talk from BlackAlps 2024 by Marcel and me: <a href="https://www.blackalps.ch/ba-24/talks.php#02">GlobalConfusion: TrustZone Trusted Application 0-Days by Design</a>. 
+
+    <p>With the above we're all caught up and running shellcode in the context of the compromised TA. How to escalate privileges from there? We will need to understand how the TA communicates with the TEE OS or (spoiler) other S-EL0 components. Reverse engineering the TA code only brings us so far, since the low level code implementing the syscalls is imported from shared libraries. We will need to get our hands on these libraries (+ all other TEE related files).
+
+    <h2>Mapping The Attack Surface</h2>
+    <p>Fortunately the BeanPod TEE ships files unencrypted in a tee.img file (Which you can find by downloading the fastboot firmware for any Xiaomi device using BeanPod and unpacking the tar). The tee.img contains various bootloaders plus a gzipped soter.img file. This soter.img file is the file actually loaded by the secure monitor to load the TEE. I wrote a small script to help unpack soter.img (<a href="dump_soter.py">dump_soter.py</a>). The resulting files:
+
+    <pre><code class="language-armasm"> ese_server               libirq.so                   libtomcrypt.so          libuTlog.so
+'fiasco -serial_esc'      libkey.so                   lib_tvm_sst.so          libuTpf_spi.so
+ l4re                     libkproxy.so                lib_tvm_time.so         libuTrpmb.so
+ lib4log.so               libl4sys-direct.so          libuc_c.so              libutsem.so
+ lib4re-c.so              libl4sys.so                 lib_utactive.so         libuTsys_base.so
+ lib4re-c-util.so         libl4util.so                libuTbta.so             libuTsys_device.so
+ lib4re.so                libl4z.so                   libuTbta_util.so        libuTsys_io.so
+ lib4re-util.so           libld-l4.so                 libuTcapmgr.so          libuTsys_thread.so
+ libc_be_l4refile.so      libloader.so                libuTcrypto.so          libuTtime.so
+ libc_be_l4re.so          libmpa.so                   libuTdrv_call.so        libvfs.so
+ libc_be_sig.so           libmsg.so                   libuTdrv_framework.so   lib_virtualization.so
+ libc_be_socket_noop.so   libneu_util.so              libuTfp_alipay.so       moe
+ libcbor.so               liboptee.so                 libuTfp_ese.so          ned
+ lib_common.so            libpthread.so               libuTfp_fido.so         ree_agent
+ libc_support_misc.so     lib_ree_mem.so              libuTfp_mipay.so        sigma0
+ libdl.so                 lib_seapi_inner.so         'libuTfp.so '            sst-server
+ libdrivers.so            libseapi.so                 libuTfp_wechat.so       uTbtaLoader
+ lib_ese_caps_alloc.so    lib_sec_manager_verify.so   libuTfs.so              uTcapmgr
+ libese_spi_p73.so        libslab.so                  libuTgp_ex.so           uTMemory
+ libese_spi_st.so         lib_sst_partition_cfg.so    libuTgp_nomain.so       uTSeckey
+ lib_fido_tal.so          libsupc++.so                libutinfo.so            uTSecManager
+ libfp_server.so          libteec++.so                libuTkeymaster.so       uTSemaphore</code></pre>
+
+
+    <p>Turns out BeanPod is using a <a href="https://os.inf.tu-dresden.de/fiasco/">fiasco(L4Re)</a> microkernel (moe, ned, sigma0 and of course fiasco are all standard binaries used by L4Re). Being able to interact with a microkernel deployed in production is pretty cool. Unfortunately this also means the kernel itself is not the most promising attack surface. Instead we should look at BeanPod specific privileged processes reachable over IPC by our compromised TA. 
+
+    <p>Fiasco uses the concept of capabilities, which govern which IPC endpoints a given process can communicate with. In a first step we should enumerate our compromised TAs capabilities and map this to other processes running in the TEE. At this point I spent some time reverse engineering the various shared libraries used by our TA to understand how it communicates with other processes over IPC.
+
+    <p>After some time I came across the following code, analyzing a function called by the TA imported from libuTdrv.so
+
+    <pre><code class="language-armasm">int mdrv_open(undefined4 param_1,undefined4 param_2)
+{
+  ...
+  iVar4 = _ta_cfg;
+  puVar5 = *(uint **)(l4re_global_env + 0x2c);
+  if ((puVar5 != (uint *)0x0) && (puVar5[1] != 0xffffffff)) {
+    while( true ) {
+      pcVar6 = "ta_manager";
+      puVar7 = puVar5;
+      do {
+        puVar1 = puVar7 + 2;
+        puVar7 = (uint *)((int)puVar7 + 1);
+        if (*(char *)puVar1 == '\0') goto loop_end;
+        pcVar6 = pcVar6 + 1;
+        if ((*pcVar6 == '\0') || (*(char *)puVar1 != *pcVar6)) goto loop_end;
+      } while (pcVar6 != "r");
+      if (*(char *)((int)puVar5 + 0x12) == '\0') break;
+loop_end:
+      if ((puVar5 + 6 == (uint *)0x0) ||
+         (puVar7 = puVar5 + 7, puVar5 = puVar5 + 6, *puVar7 == 0xffffffff)) goto fail;
+    }
+    uVar8 = *puVar5;
+    if ((uVar8 & 0x800) == 0) {
+ 	...
+        }
+fail:
+  log_msg(2,5,"[%s:%d/%s] <err> %sFailed to get cap \'%s\'\n","drv_call.cc",0x17,"query_uuid",
+          &DAT_00011e78,"ta_manager");
+  return -1;
+}</code></pre>
+
+    <p>It looks like the code is checking if the current process has the "ta_manager" capability. It looks like standard L4Re functionality and indeed this seems to be the l4re_env_get_cap_l function (<a href="https://github.com/kernkonzept/l4re-core/blob/5450e93a863fde1d1e52ade60990841f90139b2b/l4re/include/env.h#L188">L4Re source</a>). Usually this function would be placed before the actual IPC call as a client side check to ensure the caller has permissions to communicate with the IPC server. It would be very convenient if we could iterate over our TAs l4re_global_env that way and enumerate the permissions.
+
+    <h2>Writing Shellcode</h2>
+
+    <p>Before we go further I'll take a quick detour to talk about writing shellcode for the TA along with how we get back data from the TEE.
+
+    
 
     <p>It means a write to an unmapped address pointed to by <code>r4</code>.</p>
 
