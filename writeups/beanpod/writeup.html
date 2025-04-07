@@ -40,7 +40,7 @@
 
     p {
       line-height: 1.5;
-      font-size: 14px;
+      font-size: 15px;
     }
 
     pre {
@@ -87,15 +87,15 @@ table {
     <p><strong>Author:</strong> Philipp Mao</p>
     <p><strong>Date:</strong> April 2025</p>
 
-    <p>While working on the <a href="https://www.usenix.org/system/files/usenixsecurity24-busch-tea.pdf">Spill The TeA</a> and <a href="https://www.usenix.org/system/files/usenixsecurity24-busch-globalconfusion.pdf">GlobalConfusion</a> paper (both studies on the prevalence of common TA vulnerabilities) we (me and <a href="https://mbusch.io/">Marcel(@0ddc0de)</a>) accumulated a number of vulnerable TAs. For one of these TAs, specifically the so-called keyinstall TA on the Xiaomi Note 11s, Marcel wrote a stable exploit that achieved code execution as the TA. After a delay of about one year, I decided to take his exploit and see if I could escalate privileges from the TA to compromise the TEE. I chose that TA not only because of the availability of the exploit but also because the used TEE (called BeanPod) had not been previously compromised.
+    <p>While working on the <a href="https://www.usenix.org/system/files/usenixsecurity24-busch-tea.pdf">Spill The TeA</a> and <a href="https://www.usenix.org/system/files/usenixsecurity24-busch-globalconfusion.pdf">GlobalConfusion</a> papers (both studies on the prevalence of common TA vulnerabilities) we (me and <a href="https://mbusch.io/">Marcel(@0ddc0de)</a>) accumulated a number of vulnerable TAs. For one of these TAs, specifically the so-called keyinstall TA on the Xiaomi Note 11s, Marcel and me wrote a stable exploit that achieved code execution as the TA. After a delay of about one year, I decided to take his exploit and see if I could escalate privileges from the TA to compromise the TEE. I chose that TA not only because of the availability of the exploit but also because the used TEE (called BeanPod) had not been previously compromised.
 
     <p>This blog is a writeup of the research I did to escalate privileges and compromise the BeanPod TEE, which was done in summer 2024. With the bug I found I was able to escalate privileges from S-EL0 (code execution in a Trusted Application) to S-EL3 (arbitrary physical memory read/write). I will mainly be talking about reverse engineering and writing shellcode for interacting with arm32 IPC servers running on top of the fiasco(L4Re) microkernel.
 
     <h2>Background</h2>
 
-    <p>Modern Android devices use trusted execution environments (TEEs) to store sensitive user data (biometrics, drm keys etc) and restrict access to peripherals. This technology has so far been based on ARM Trustzone, which allows partitioning execution contexts into normal and secure world. Android apps, the Android framework run in the normal world at EL0 (userspace), while the linux kernel runs at N-EL1 (normal world exception level 1). 
+    <p>Modern Android devices use trusted execution environments (TEEs) to store sensitive user data (biometrics, drm keys etc) and restrict access to peripherals. This technology has so far been based on ARM Trustzone, which allows partitioning execution contexts into normal and secure world. Android apps and the Android framework run in the normal world at EL0 (userspace), while the linux kernel runs at N-EL1 (normal world exception level 1). 
 
-    <p>The components running in the secure world are trusted applications (TAs) at S-EL0. Each TA implements a specific use case from the TEE (there is for example the keymaster TA responsible for managing secure storage) and exposes that functionality to the normal world. At S-EL1 runs the TEE OS, which is responsible for running and seperating the different TAs. Finally at S-EL3 runs the secure monitor, the component responsible for orchestrating interaction between the normal and secure world. The code running inside the TEE is proprietary and comes either from the SOC or a TEE vendor. Below is a table with various SOCs and TEE implementations. This blog will be about xiaomi with the BeanPod TEE.
+    <p>The components running in the secure world are trusted applications (TAs) at S-EL0. Each TA implements a specific use case from the TEE (there is for example the keymaster TA responsible for managing encryption keys) and exposes that functionality to the normal world. At S-EL1 runs the TEE OS, which is responsible for running and seperating the different TAs. Finally at S-EL3 runs the secure monitor, the component responsible for orchestrating interaction between the normal and secure world. The code running inside the TEE is proprietary and comes either from the SOC or a TEE vendor. Below is a table with various SOCs and TEE implementations. This blog will be about Xiaomi with the BeanPod TEE.
 
 <table>
     <tr>
@@ -127,9 +127,9 @@ table {
 
     <p>The main premise of the TEE is that only signed aka "trusted" code is run in there. Rooting a phone gives S-EL1 code execution but that does not give access to the TEE. 
 
-    <p>The first step to compromising the TEE is to get code execution in a TA over the API exposed to the normal world, usually by exploiting a bug in the TA. Which is exactly how Marcel achieved code execution at S-EL0. I will not discuss the bug/exploitation process of the vulnerable TA for the sake of brevity. The bug and exploitation process is presented in this talk from BlackAlps 2024 by Marcel and me: <a href="https://www.blackalps.ch/ba-24/talks.php#02">GlobalConfusion: TrustZone Trusted Application 0-Days by Design</a>. 
+    <p>The first step to compromising the TEE is to get code execution in a TA over the API exposed to the normal world, usually by exploiting a bug in the TA, which is exactly how we achieved code execution at S-EL0 by exploiting the vulnerable keyinstall TA. I will not discuss the bug/exploitation process of the vulnerable TA for the sake of brevity. The bug and exploitation process is presented in this talk from BlackAlps 2024 by Marcel and me: <a href="https://www.blackalps.ch/ba-24/talks.php#02">GlobalConfusion: TrustZone Trusted Application 0-Days by Design</a>. 
 
-    <p>With the above we're all caught up and running shellcode in the context of the compromised TA. How to escalate privileges from there? We will need to understand how the TA communicates with the TEE OS or (spoiler) other S-EL0 components. Reverse engineering the TA code only brings us so far, since the low level code implementing the syscalls is imported from shared libraries. We will need to get our hands on these libraries (+ all other TEE related files).
+    <p>With the above we're all caught up and running shellcode at S-EL0 in the context of the compromised TA. How to escalate privileges from there? We will need to understand how the TA communicates with the TEE OS or (spoiler) other S-EL0 components. Reverse engineering the TA code only brings us so far, since the low level code actually making the system calls is imported from shared libraries. We will need to get our hands on these libraries (+ all other TEE related files).
 
     <h2>Mapping The Attack Surface</h2>
     <p>Fortunately the BeanPod TEE ships files unencrypted in a tee.img file (Which you can find by downloading the fastboot firmware for any Xiaomi device using BeanPod and unpacking the tar). The tee.img contains various bootloaders plus a gzipped soter.img file. This soter.img file is the file actually loaded by the secure monitor to load the TEE. I wrote a small script to help unpack soter.img (<a href="dump_soter.py">dump_soter.py</a>). The resulting files:
@@ -158,11 +158,11 @@ table {
  libfp_server.so          libteec++.so                libuTkeymaster.so       uTSemaphore</code></pre>
 
 
-    <p>Turns out BeanPod is using the <a href="https://os.inf.tu-dresden.de/fiasco/">fiasco(L4Re)</a> microkernel (moe, ned, sigma0 and of course fiasco are all standard binaries used by L4Re). Being able to interact with a microkernel deployed in production is pretty cool. Unfortunately this also means the kernel itself is not the most promising attack surface. Instead we should look at BeanPod specific privileged processes reachable over IPC by our compromised TA. 
+    <p>Turns out BeanPod is using the <a href="https://os.inf.tu-dresden.de/fiasco/">fiasco(L4Re)</a> microkernel (moe, ned, sigma0 and of course fiasco are all standard binaries used by L4Re). Being able to interact with a microkernel deployed in production is pretty cool. Unfortunately this also means the kernel itself is not the most promising attack surface. Instead we should look at BeanPod specific privileged processes reachable over IPC by the keyinstall TA. 
 
-    <p>Fiasco uses the concept of capabilities, which govern which IPC endpoints a given process can communicate with. In a first step we should enumerate our compromised TAs capabilities and map this to other processes running in the TEE. At this point I spent some time reverse engineering the various shared libraries used by our TA to understand how it communicates with other processes over IPC.
+    <p>Fiasco uses the concept of capabilities, which govern which IPC endpoints a given process can communicate with. In a first step we should enumerate our compromised TA's capabilities and map this to other processes running in the TEE. At this point I spent some time reverse engineering the various shared libraries used by the keyinstall TA to understand how it communicates with other processes over IPC.
 
-    <p>After some time I came across the following code, analyzing a function called by the TA imported from libuTdrv.so
+    <p>After some time I came across the following code, analyzing a function called by the TA imported from libuTdrv_call.so
 
     <pre><code class="language-armasm">int mdrv_open(undefined4 param_1,undefined4 param_2)
 {
@@ -195,7 +195,7 @@ fail:
   return -1;
 }</code></pre>
 
-    <p>It looks like the code is checking if the current process has the "ta_manager" capability. It looks like standard L4Re functionality and indeed this seems to be the l4re_env_get_cap_l function (<a href="https://github.com/kernkonzept/l4re-core/blob/5450e93a863fde1d1e52ade60990841f90139b2b/l4re/include/env.h#L188">L4Re source</a>). Usually this function would be placed before the actual IPC call as a client side check to retrieve the handle associated with the capability. It would be very convenient if we could iterate over our TAs l4re_global_env that way and enumerate the capabilities.
+    <p>It looks like the code is checking if the current process has the "ta_manager" capability. It looks like standard L4Re functionality and indeed this seems to be the l4re_env_get_cap function (<a href="https://github.com/kernkonzept/l4re-core/blob/5450e93a863fde1d1e52ade60990841f90139b2b/l4re/include/env.h#L188">L4Re source</a>). Usually this function would be placed before the actual IPC call to retrieve the handle associated with the capability. It would be very convenient if we could iterate over our TA's l4re_global_env that way and enumerate the capabilities.
 
     <h2>Retrieving the Capabilities</h2>
 
@@ -221,7 +221,7 @@ shellcode.bin: mdrv.h stdlib.h l4utils.h shellcode.c
                 }
    }</code></pre>
 
-   <p>The address of the l4re_env global in lubTdrv is in the libraries data section at a constant offset from the library base. The only requirement is to find the libraries loaded address. Fortunately, BeanPod does not use ASLR and thus the library is always mapped at a fixed offset. However, initially the address of libuTdrv.so is not known. Fortunately the TA is always mapped at a known addresss and the GOT of the TA points to the library. Following pointers originating from the TA in this way we can obtain the fixed addresses for almost all relevant libraries. The following code in the shellcode enumerates the current TA's capabilities:
+   <p>A pointer to l4re_global_env global is stored in the data section of libuTdrv_call.so (at a constant offset from the library base). The only requirement is to find the library's loaded address. Fortunately, BeanPod does not use ASLR and thus the library is always mapped at a fixed offset. However, initially the address of libuTdrv_call.so is not known. Fortunately the TA is always mapped at a known address and the GOT of the TA points to the library. Following pointers originating from the TA in this way we can obtain the fixed addresses for almost all relevant libraries. The following code in the shellcode enumerates the current TA's capabilities:
 
 <pre><code class="language-armasm">#define liuTrdv_l4re_global_env_off 0xa200
 #define mdrv_open_off 0xb88
@@ -259,7 +259,7 @@ enum_caps(l4re_global_env);</code></pre>
 [   69.024764] [TZ_LOG] ta_keyin| cap: ta_service\x0d
 [   69.024765] [TZ_LOG] ta_keyin| cap: tee_server\x0d</code></pre>
 
-    <p>The capabilities themselves do not map directly to the attack surface. In L4Re a lua script is used by ned (the init process) to bootstrap the system, including starting IPC servers and assigning capabilities to them. This lua script is stored inline in the binary for BeanPod. You can have a look at the complete file <a href="l4setup.lua">here</a>. The most important part for us is how to map capabilities to processes. For example the TZ_crypto capability maps to the uTSeckey process in the following way:
+    <p>The capabilities themselves do not directly tell us which process the TA can communicate with. In L4Re a lua script is used by ned (the init process) to bootstrap the system, including starting IPC servers and assigning capabilities to them. This lua script is stored inline in the binary for BeanPod. You can have a look at the complete file <a href="l4setup.lua">here</a>. The most important part for us is how the setup script maps capabilities to processes. For example the TZ_crypto capability maps to the uTSeckey process in the following way:
     
 <pre><code class="language-python">local uTSeckey_crypto = l:new_channel();
 ...
@@ -281,7 +281,7 @@ l:start({
     log = {"uTSeckey", "B"},
 }, "rom/uTSeckey");</code></pre>
 
-    <p>The first line sets up a new IPC channel. Then the l:start function starts the uTSeckey process and assigns it as the server for the uTSeckey_crpyto IPC channel. Later on in the file we can see that the BTA (BeanPod TA) Loader process is given access to teh uTSeckey_crypto (aliased to TZ_crypto) IPC channel. The BTA Loader process is responsible for loading TAs and TAs inherit their capabilities from this process.
+    <p>The first line sets up a new IPC channel. Then the l:start function starts the uTSeckey process and assigns it as the server for the uTSeckey_crpyto IPC channel. Later on in the file we can see that the BTA (BeanPod TA) Loader process is given access to the uTSeckey_crypto (aliased to TZ_crypto) IPC channel. The BTA Loader process is responsible for loading TAs and TAs inherit their capabilities from this process.
 
 <pre><code class="language-python">------------------------------------------------------------------------
 --                                BTA loader
@@ -290,13 +290,7 @@ wait_4_reeagent:wait_4_reeagent();
 print("begin to start bta loader.");
 l:start(
     caps = {
-        -- TODO: for unittest only, should be disabled when unittest is disabled
-        test_namespace = test_namespace,
-        memory_client = uTMemory,
-        memory_client_ns = uTMemory_ns,
-        TZ_vfs = uTgate_vfs,
-        TZ_msg = uTgate_msg,
-        TZ_reetime = uTgate_reetime,
+        ...
         TZ_capmgr = uTcapmgr,
         TZ_sem = uTsem,
         TZ_key = uTSeckey,
@@ -307,29 +301,16 @@ l:start(
         sst_dyn_creat = uTsst_create_partition,
         VSD = verify_namespace,
         sec_manager = sec_manager,
-        sec_mgr_produce = sec_mgr_produce,
-        fp_server = fingerprint,
-        ---- tui
-        tui_notice_c = uTtui_notice,
-        tui_display_c = uTtui_display,
-        -- static SST cap for uTAgent
-        sst_l1_system = uTsst_l1_system,
-        sst_l2_tee_00 = uTsst_tee_00,
-        -- static SST cap for Alipay
-        sst_l1_tee_01 = uTsst_l1_tee_01,
-        sst_l2_tee_01 = uTsst_tee_01,
-        sst_l1_km = uTsst_l1_tee_km,
-        sst_l2_km = uTsst_tee_06,
-        ese_dyn_cap = ese_dyn_cap_alloc,
         tee_server_s = utgate_to_bta_loader:svr(),
         tee_server = vnet_to_bta_loader:svr(),
+	   	...        
     },
     scheduler = L4.Env.user_factory:create(L4.Proto.Scheduler, 0xa0, 0x90),
     log = { "uTbtaLdr" ,"y"},
     l4re_dbg = L4.Dbg.Warn,
 }, "rom/uTbtaLoader");</code></pre>
 
-    <p>At this point we have finally mapped the attack surface from the TA to other privileged components. The final list of IPC endpoints our TA can communicate with is the following (which we can map statically by inspecting the lua setup script).
+    <p>At this point we have finally mapped the attack surface from the TA to other privileged IPC server processes. The final list of IPC endpoints our TA can communicate with is the following:
 
 <table>
     <tr>
@@ -364,17 +345,17 @@ l:start(
 
     <h2>Reverse Engineering IPC Servers</h2>
     
-    <p>To figure out what an IPC endpoint we can either reverse engineer the client library to figure out what the API is doing. To find bugs in the IPC handling code we need to find the function handling incoming IPC requests. Looking at the L4Re example IPC server <a href="https://l4re.org/doc/examples_2libs_2l4re_2streammap_2server_8cc-example.html">example</a>, we can see that the IPC server registers an L4::Server object with the capability name overwriting the dispatch function to the application-specific function. By looking for the capability name in the IPC server binary and then following it's usage, it's possible to identify the dispatch function for the relevant capability.
+    <p>To find bugs in the IPC handling code we need to find the function handling incoming IPC requests. Looking at the L4Re example IPC server <a href="https://l4re.org/doc/examples_2libs_2l4re_2streammap_2server_8cc-example.html">example</a>, we can see that the IPC server registers an L4::Server object with the capability name overwriting the dispatch function to the application-specific function. By looking for the capability name in the IPC server binary and then following it's usage, it's possible to identify the dispatch function for the relevant capability.
 
-    <p>The server's dispatch function takes three arguments. The this pointer in r0, pointing to the server object. The rights bits in r1 (not sure what this is used for) and the Iostream in r2. The Iostream points to a buffer that contains the data sent by the client. The client populates this buffer by first retrieving it's <a href="https://l4re.org/doc/group__l4__utcb__api.html">utcb</a> and writing to the messsage registers. In BeanPod the norm seems to be to write the command id (identifying which function to call in the server) to MR0 and then writing the remaining arguments to MR1, MR2 etc.. The following decompilation  code shows an example of a client IPC call. (This function is called in mdrv_open, calling command id 2 in the ubTaManager, ta_manager IPC channel).
+    <p>The server's dispatch function takes three arguments. The this pointer in r0, pointing to the server object. The rights bits in r1 (not sure what this is used for) and the Iostream in r2. The Iostream points to a buffer that contains the data sent by the client. The client populates this buffer by first retrieving its <a href="https://l4re.org/doc/group__l4__utcb__api.html">utcb</a> and writing to the message registers. In BeanPod the norm seems to be to write the command id (identifying which function to call in the server) to MR0 and then writing the remaining arguments to MR1, MR2 etc.. The following decompilation  code shows an example of a client IPC call. (This function is called in mdrv_open, calling command id 2 in the ubTaManager, ta_manager IPC channel).
 
 <pre><code class="language-armasm">uVar7 = l4_utcb_wrap();
 puVar2 = (undefined4 *)uVar7;
 *puVar2 = 2; //command id
-puVar2[1] = driver_id;
+puVar2[1] = driver_id; //function argument 1
 uVar6 = (*(code *)&SUB_fffffff4)(2,(int)((ulonglong)uVar7 >> 0x20),uVar6 & 0xfffff800 | 3,0); //IPC call</code></pre>
 
-    <p>l4_utcb_wrap retrieves the UTCB and the call to 0xfffffff4 traps to the kernel and initiates the IPC call. MR0 is set to 2 and MR1 is set to the first argument of the IPC function. In the dispatch function the received IPC function is parsed. Unfortunately the decompilation of the inline handling of the Iostream object is not very readable but should be understandable if you squint hard enough...
+    <p>l4_utcb_wrap() retrieves the UTCB and the call to 0xfffffff4 traps to the kernel and initiates the IPC call. MR0 is set to 2 and MR1 is set to the first argument of the IPC function. In the dispatch function the received IPC function is parsed. Unfortunately the decompilation of the inline handling of the Iostream object is not very readable but should be understandable if you squint a little..
 
 <pre><code class="language-armasm"> undefined4 bta_manger::dispatch(undefined4 param_1,undefined4 param_2,L4::Ipc::Iostream *iostream)
 _current_msg = iostream->_current_msg;
@@ -398,11 +379,11 @@ case 2: {
 		mdrv_uuid? = 0;
 }</code></pre>
     
-    <p>Now we're finally ready to look for vulnerabilities in the IPC servers.. 
+    <p>Now we're finally ready to look for vulnerabilities in the IPC servers...
 
     <h2>Stack Buffer Overflow in sst-server</h2>
 
-    <p>The sst-server is not exactly the best example the reverse engineering process outlined above because there is actually no reference to the "sst_client" string. However there seems to be a default dispatch function and by looking at the client libraries we can correlate the command ids handled in the switch statement to the sst_client capability. In command 0x41 the do_vfs_work function is called which copies data to the stack using the length provided in the MR7. The pointer at MR9 (puVar4 + 8) points to the filepath, i.e., user controlled data.
+    <p>The sst-server is not exactly the best example of the reverse engineering process outlined above because there is actually no reference to the "sst_client" string. However there seems to be a default dispatch function and by looking at the client libraries we can correlate the command ids handled in the switch statement to the sst_client capability. In command 0x41 the do_vfs_work function is called which copies data to the stack using the length provided in the MR7. The pointer at MR9 (puVar4 + 8) points to the filepath, i.e., user controlled data.
 
 <pre><code class="language-armasm">puVar4 = (undefined4 *)utcb;
 uVar5 = puVar3[2];
@@ -416,7 +397,7 @@ switch(*puVar4) {
 	snprintf(acStack_218,0x101,"/data/vendor/thh/%s/%s",uVar5,auStack_114);
 ..</code></pre>
 
-    <p>All this effort to end up with a trivial stack buffer overflow :'D... The client code which calls this function in libuTfs.so also does not check the size of the filepath so the vulnerability can be triggered by simply calling the sst_l2_fopen function in the shared library with a file path of size > 0x101. If we however want to overflow with null bytes we need to make the IPC call ourselves.The following shellcode triggers the stack buffer overflow and calls the log function in the sst-server to pprint the "SST!!!" string to the kernel log. (Of course there are also no stack canaries).
+    <p>All this effort to end up with a trivial stack buffer overflow :'D... The client code which calls this function in libuTfs.so also does not check the size of the filepath so the vulnerability can be triggered by simply calling the sst_l2_fopen function in the shared library with a file path of size > 0x101. If we however want to overflow with null bytes we need to make the IPC call ourselves.The following shellcode triggers the stack buffer overflow and calls the log function in the sst-server to print the "SST!!!" string to the kernel log. (There no stack canaries).
 
 <pre><code class="language-armasm">logprintf1("==== sst-shit ==== \n");
 int ov_size = 0x200;
@@ -462,6 +443,8 @@ do_fopen_manual(lib_tvm_sst_base, file_path_, 280);</code></pre>
    
     <h4>Demo</h4>
 
+    <p>In the demo I'm showing the screen of my laptop, sending the exploit to the phone via ADB, first exploiting the TA and then triggering the stack buffer overflow in the sst-server. The huge mess of base64 at the end (or start when I'm scrolling up) is the crash dump from the sst-server</p>
+
     <video controls width="640" height="360">
   <source src="sst_ov.mp4" type="video/mp4">
 </video> 
@@ -470,7 +453,7 @@ do_fopen_manual(lib_tvm_sst_base, file_path_, 280);</code></pre>
 
     <p>The sst-server has a number of capabilities our TA does not have, by exploiting this stack overflow we could escalate capabilities. However finalizing the exploit for the TA was already annoying enough I did not feel like exploiting the overflow to achieve shellcode execution in the sst-server. Instead I looked for another vulnerability. 
 
-    <p>One of the IPC servers that is very interesting is the uTMemory server accessible by the TA via the memory_client(ns). The server has access to the sigma0 IPC. According to the <a href="https://l4re.org/doc/l4re_servers_sigma0.html">documentation</a>, the sigma0 server has access to physical memory and serves as the memory provider. The fact that there is a IPC server that has this capability and is reachable from our TA should set off all alarm bells. By exploiting the uTMemory server we'd get access to all physical memory.
+    <p>One of the IPC servers that is very interesting is the uTMemory server accessible by the TA via the memory_client(ns) capability. The server has access to the sigma0 IPC channel. According to the <a href="https://l4re.org/doc/l4re_servers_sigma0.html">documentation</a>, the sigma0 server has access to physical memory and serves as the memory provider. The fact that there is an IPC server that has this capability and is reachable from our TA should set off all alarm bells. If we could exploit the uTMemory server we'd get access to all physical memory.
 
 <pre><code class="language-armasm">--------------------------------------------------------------------------------
 --                                utmemory server
@@ -486,11 +469,13 @@ l:start({
     log = {"uTMemory", "Y"},
 }, "rom/uTMemory");</code></pre>
 
-    <p>The client code communicating with the uTMemory server can be found in lib_ree_mem.so. In particular the function ut_pf_mm_map_s wraps the IPC call to the uTMemory server. The function itself is called in libvfs.so in the __map_vfs_share_memory function. This function appearantly maps shared (physical) memory as an alternative communication channel to an IPC server. The ut_pf_mm_map_s internally calls a function with the argument "memory_client" as the first argument. Inspecting this function we find the familiar IPC code, sending an IPC request built from the arguments to the ut_pf_mm_map_s functions to the uTMemory IPC server. Instead of reverse engineering the server I decided to figure out the function signature by reverse engineering the client code in ut_pf_mm_Map_s and __map_vfs_share_memory and simply try mapping some physical memory. The final signature is the following:
+    <p>The client code communicating with the uTMemory server can be found in lib_ree_mem.so. In particular the function ut_pf_mm_map_s wraps the IPC call to the uTMemory server. The function itself is called in libvfs.so in the __map_vfs_share_memory function. This function appearantly maps shared (physical) memory as an alternative communication channel to an IPC server. The ut_pf_mm_map_s internally calls a function with the argument "memory_client" as the first argument. Inspecting this function we find the familiar IPC code, sending an IPC request built from the arguments to the ut_pf_mm_map_s function to the uTMemory IPC server. Instead of reverse engineering the server I decided to figure out the function signature by reverse engineering the client code in ut_pf_mm_map_s and __map_vfs_share_memory and simply try calling the function in the shellcode. The final signature is the following:
 
 <pre><code class="language-armasm">int ut_pf_mm_map_s(int pa_high, int pa_low, int size, int perm, int* va)</code></pre>
     
-    <p>The function allows specifying a physical address in the first two arguments (the TEE is running with 32 bit but the process is 64bit), along with the size and the target virtual address. I tested if the function would map physical memory by mapping physical address 0x0, which is where the mediatek bootrom should be mapped. And voila it actually worked. At this point it is game over, by mapping physical memory we can overwrite code of the secure monitor and achieve code execution at S-EL3. In the end I did not bother writing shellcode and instead overwrote a logging string in the secure monitor, which is printed whenever the lock button is pressed:
+<p>The function allows specifying a physical address in the first two arguments (the TEE is running with 32 bit but the processor itself is 64bit), along with the size and a pointer to the virtual address that can be used to access the mapped memory. I tested if the function would map physical memory by mapping physical address 0x0, which is where the mediatek bootrom should be mapped. And voila it actually worked. </p>
+
+    <p>At this point it is game over, by mapping physical memory we can overwrite code of the secure monitor and achieve code execution at S-EL3. In the end I did not bother hijacking code execution in the monitor and instead overwrote a logging string in the secure monitor, which is printed whenever the lock button is pressed:
 
 <pre><code class="language-armasm">int lib_ree_mem_base = 0x225000;
 ut_pf_mm_map = lib_ree_mem_base + 0x1164;
@@ -524,7 +509,7 @@ if(map_r == 0){
 
     <h4>Demo</h4>
 
-    <p>In the demo I run the exploit and the push the power button a bunch of times on the phone to trigger the print.
+    <p>In the demo I run the exploit and the push the power button a bunch of times on the phone to trigger the print.</p>
 
 <video controls width="640" height="360">
   <source src="ut_pf_mm_map.mp4" type="video/mp4">
@@ -533,7 +518,7 @@ if(map_r == 0){
 
     <h2>Conclusion</h2>
     
-    <p>This concludes this excursion into the BeanPod TEE. I hope you enjoyed this writeup. Big shoutout again to Marcel for introducing me to the wonderful world of Android TEEs. The vulnerabilities in this blog have been disclosed in summer 2024. I don't know if they have been fixed but on newer Xiaomi device BeanPod has been replaced by MITEE a Fuchsia! based TEE.
+    <p>This concludes this excursion into the BeanPod TEE. I hope you enjoyed this writeup. Big shoutout again to Marcel for introducing me to the wonderful world of Android TEEs without whom this research would not have been possible. The vulnerabilities in this blog have been disclosed in summer 2024. I don't know if they have been fixed but on newer Xiaomi devices BeanPod has been replaced by MITEE a Fuchsia! based TEE. It is why I made this blog post (besides lazyness) only in 2025 as the BeanPod TEE will be mostly obsolete at this point. The exploit was run on the Xiaomi Note 11s with firmware version 1.0.4.0.TGLEUXM.
 
   </div>
 </body>
