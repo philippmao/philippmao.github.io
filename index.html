@@ -1,5 +1,178 @@
-<h1> Philipp's Website </h1>
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 
-Welcome to my WIP website...
+<title>Philipp's Website</title>
 
+<style>
+a {
+    text-decoration: none;
+}
+a:hover {
+    text-decoration: underline; /* optional: underline on hover for better UX */
+}
+    body {
+        /*font-family: Arial, sans-serif;*/
+        margin: 0;
+        padding: 0;
+        text-align: center;
+    }
 
+    .center-column {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    nav.container {
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+        max-width: 800px;
+        margin-bottom: 20px;
+    }
+
+    .navbar-item {
+        margin: 0 10px;
+    }
+
+    header.page-header h1 {
+        margin: 10px 0;
+    }
+
+    .profile-section {
+        display: flex;
+        align-items: center;
+        text-align: left;
+        margin-top: 20px;
+    }
+
+    .profile-text {
+        flex: 1;
+    }
+
+    .profile-pic {
+        width: 150px;
+        height: 150px;
+        /*border-radius: 50%;*/
+        margin-left: 20px;
+        object-fit: cover;
+    }
+    .description {
+        display: none;
+        margin-top: 5px;
+        padding: 8px;
+        border: 1px solid #ccc;
+        background: #f9f9f9;
+        /*font-style: italic;*/
+    }
+
+    li {
+        margin-bottom: 10px;
+    }
+
+    /* Style the title to indicate it's clickable */
+    strong {
+        cursor: pointer;
+        transition: font-weight 0.2s;
+    }
+
+    strong:hover {
+        font-weight: bolder;
+        color: #0056b3; /* Optional: change color on hover */
+    }
+
+.publication {
+        text-align: left; /* This overrides the center alignment */
+        margin-bottom: 15px;
+    }
+</style>
+</head>
+<body>
+    <div class="center-column">
+
+        <nav class="container">
+            <div class="navbar-left">
+                <!--<span class="navbar-item">
+                    <a class="navbar-main" href="/index.html">/home</a>
+                </span>--!>
+            </div>
+
+            <div class="navbar-right">
+<!--
+                <span class="navbar-item">
+                    <a href="/index.html">/about</a>
+                </span>
+                <span class="navbar-item">
+                    <a href="/research.html">/writeups</a>
+                </span>
+--!>
+            </div>
+        </nav>
+
+        <header class="page-header">
+            <h1>About Me</h1>
+        </header>
+
+        <div class="profile-section">
+            <div class="profile-text">
+                <p>I'm Philipp Mao, a PhD student at EPFL working at the Hexhive group.
+                My current research focusses on Android security, poking at the seams underneath the app layer.</p>
+                <p>I play ctf with 0rganizers/poylgl0ts under the username P.Howe.</p>
+		<p>Contact: philipp.mao@epfl.ch</p>
+            </div>
+            <img class="profile-pic" src="philipp.jpg" alt="Profile Picture">
+        </div>
+	
+	<header class="page-header">
+            <h1>Publications</h1>
+        </header>
+
+	<h3>2024</h3>
+
+<div class="publication"> 
+<div class="publication">
+        <!--<strong onclick="toggleDescription(this)">Exploiting Android’s Hardened Memory Allocator</strong><br/> --!>
+        <b>
+GlobalConfusion: TrustZone Trusted Application 0-Days by Design</b>, <a href="https://www.usenix.org/conference/usenixsecurity24/presentation/busch-globalconfusion"><strong>USENIX'25</strong></a><br/>
+        M. Busch, <em>P .Mao</em>, M. Payer [<a href=https://www.usenix.org/system/files/usenixsecurity24-busch-globalconfusion.pdf>PDF</a>][<a href=https://github.com/HexHive/GlobalConfusion>Artifact</a>]
+	</div>   
+	<p></p>
+       
+ <div class="publication">
+        <!--<strong onclick="toggleDescription(this)">Exploiting Android’s Hardened Memory Allocator</strong><br/> --!>
+        <b>Spill the TeA: An Empirical Study of Trusted Application Rollback Prevention on Android Smartphones</b>, <a href="https://www.usenix.org/conference/usenixsecurity24/presentation/busch-tea"><strong>USENIX'25</strong></a><br/>
+        M. Busch, <em>P .Mao</em>, M. Payer [<a href=https://www.usenix.org/system/files/usenixsecurity24-busch-tea.pdf>PDF</a>][<a href=https://github.com/HexHive/spill_the_tea>Artifact</a>]
+	</div>   
+	<p></p>
+
+	<div class="publication">
+        <!--<strong onclick="toggleDescription(this)">Exploiting Android’s Hardened Memory Allocator</strong><br/> --!>
+        <b>Exploiting Android’s Hardened Memory Allocator</b>, <a href="https://www.usenix.org/conference/woot24/presentation/mao"><strong>WOOT'24 (best paper)</strong></a><br/>
+        <em>P. Mao</em>, E. Boschung, M. Busch, M. Payer 
+         [<a href=https://www.usenix.org/system/files/woot24-mao.pdf>PDF</a>][<a href=https://github.com/HexHive/scudo-exploitation>Artifact</a>]
+        
+	</div>
+
+</div>
+
+<script>
+function toggleDescription(strongElement) {
+    const liElement = strongElement.parentElement;
+    const desc = liElement.querySelector('.description');
+    if (desc.style.display === 'none' || desc.style.display === '') {
+        desc.style.display = 'block';
+    } else {
+        desc.style.display = 'none';
+    }
+}
+</script>
+    </div>
+</body>
+</html>
