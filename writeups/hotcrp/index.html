@@ -1,0 +1,127 @@
+<head>
+  <meta charset="utf-8">
+  <title>hotcrp RCE</title>
+</head>
+<h1
+id="procrastinating-for-5-hours-at-work-but-finding-a-hotrcp-remote-code-execution-vulnerability">Procrastinating
+for 5 hours at work but finding a HotRCP remote code execution
+vulnerability</h1>
+<p><em>(Note: this post was cowritten with Philipp Mao. It’s also posted
+on his blog, that you can find <a
+href="https://philippmao.github.io/">here!</a>)</em></p>
+<p>Yesterday at around 6pm we received an email from the maintainer of
+HotCRP warning us that some of the submitted papers to CCS 2026 might
+have been leaked due to a vulnerability. We got curious and went on
+github to check out the latest commits. And sure enough, just a couple
+hours before a commit fixing a vulnerability was pushed. We decided to
+give just a quick look.</p>
+<p>Now, we were at the office, supposedly working. Unfortunately, part
+of being good at your PhD is being bad at your PhD. Don’t listen to this
+advice, but getting lost on random rabbit holes is kind of good for
+research.</p>
+<p>Anyway, we were procrastinating, we were lazy, so we lazily asked the
+AI if the commit was a proper fix for the vulnerability, or if there
+were other similar vulnerabilities, and so on. Of course this didn’t
+work. The AI is just a tool, it’s not going to steal your job. You still
+need to know what to ask it.</p>
+<p>We saw though that among the searches it was grepping for the usual
+suspects like <code>eval(</code> and finding some results, but
+concluding it was never vulnerable. We took a closer look ourselves. We
+realized that PHP’s <code>eval</code> is used to let users perform
+complex searches by writing custom “formulas”.</p>
+<p>Those are useful for the program committee to filter papers with
+formulas such as:</p>
+<pre><code>sum(OveMer**2)</code></pre>
+<p>It’s taken from this <a
+href="https://help.hotcrp.com/help/formulas">page</a>, and calculates
+the sum of squares of the overall merit scores.</p>
+<p>Those formulas are parsed in the promptly named
+<code>formulaparser.php</code> and then some PHP would be dynamically
+generated and then eval’d.</p>
+<p>We were procrastinating, so we lazily scanned the file. We quickly
+realized two things: - The logic was very complex. This is a good sign
+when looking for vulns. There might be edge cases that are missed. - The
+logic was very complex. There is no way we are able to get a grasp of
+what is going on. Plus, we have little to no experience with PHP.</p>
+<p>So a complex parser often calls for a fuzzer. But who wants to
+actually write that? We try our luck again with the AI, this time with a
+more specific request: write a fuzzer for formulaparser.php, providing
+random bytes as input and reporting in a file whenever those formulas
+would trigger an error while inside the eval().</p>
+<p>The AI generated a monstrous, horrifid slop of a barely working
+fuzzer, constantly running out of memory for some reason and
+outrageously verbose. However, between one oom and the other the fuzzer
+was actually fuzzing, and it found pretty quickly many crashing
+testcases.</p>
+<p>What did they all have in common? The sequence “?&gt;”. Ok, that’s
+very weird. We thought it was some bug in the parsing logic, boy we were
+so wrong. No, the bug was not in HotCRP’s code, per se. Here’s the code
+in question:</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode php"><code class="sourceCode php"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">$combiner_str</span> <span class="op">=</span> <span class="st">&quot;function (...) {</span><span class="sc">\n</span><span class="st">&quot;</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span> <span class="st">&quot;  // combiner </span>{<span class="va">$user_input</span>}<span class="sc">\n</span><span class="st">  &quot;</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span> <span class="kw">self</span>::compile_body(...)</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span> <span class="st">&quot;}&quot;</span><span class="ot">;</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="kw">eval</span>(<span class="st">&quot;return </span>{<span class="va">$combiner_str</span>}<span class="st">;</span><span class="sc">\n</span><span class="st">&quot;</span>)<span class="ot">;</span></span></code></pre></div>
+<p>where <code>self::compile_body</code> returns the auto-generated PHP.
+The bug is not in the <code>compile_body</code>, but in the line above,
+where the user-provided input is pasted as a single line comment.</p>
+<p>Well, there’s nothing that could “escape” a comment and leak into the
+code, right? Only the newline character, but of course newlines are
+specifically trimmed away a few lines before.</p>
+<p>Remember the sequence that would cause the crashes: “?&gt;”. Yes, we
+are making the same face you’re making now. PHP terminates single line
+comments on the end of the php block.</p>
+<p>(Thanks to Eddie Kohler for this fun fact: it only works on single
+line comments, not /* multilines!)</p>
+<p>So, this meant that we could send something like
+<code>?&gt;&lt;?php system('ls')</code> to get code injection.</p>
+<h2 id="masking-as-a-formula">Masking as a formula</h2>
+<p>Unfortunately the simple string
+<code>?&gt;&lt;?php system('ls')</code> is not enough because the
+formula, before being eval’d, is validated in the first place. Invalid
+formulas just generate an error displayed to the user and are never
+executed.</p>
+<p>See an example of the error returned here:</p>
+<center>
+<img src="error.png" width="70%" alt="Good stuff"/>
+</center>
+<p>There are many characters that are special and must follow specific
+rules. For example, formulas support the ternary operator, so the
+<code>?</code> character expects a <code>:</code> character down the
+line. The <code>&lt;</code> instead expects a numerical to perform a
+comparison on, and so on.</p>
+<p>We spent about a couple of hours fiddling with the input, but we
+could not manage to get the <code>?&gt;&lt;?php</code> part to validate.
+AI was of very little use here, as the formula parser was about 2000
+lines of dense PHP and was too much for the LLM to understand in
+depth.</p>
+<p>We were about to give up, but in the end we found a way to have a
+valid formula that would allow us to run arbitrary code inside HotCRP.
+To verify, we spent about one hour setting up a local instance of HotCRP
+(it has a lot of steps to install and configure, but we found that
+someone made a <a
+href="https://github.com/Bramas/hotcrp-docker-compose">docker-compose</a>
+for it.</p>
+<p><em>The final proof-of-concept is omitted from this post. While a fix
+was rolled out on the 16th of January, some instances might still need
+more time to update</em></p>
+<hr />
+<p><br/></p>
+<p>By 11:30pm we had a working exploit. Soon, we realized how
+<em>critical</em> this vulnerability was. This was unauthenticated
+remote code execution on a server where conference papers are stored,
+reviewed and discussed.</p>
+<p>We realized that we had to report this immediately, even if it was
+Friday night. It is common knowledge that it is extremely rude to report
+critical vulnerabilities just before the weekend, Christmas, or similar
+periods.</p>
+<p>So we were a bit scared but we wrote a very quick and dirty email to
+the HotCRP maintainer. The email was terribly written, full of typos but
+with all the important information there. We were very surprised to see
+that just a couple of hours later, he had already replied to us and
+pushed a fix.</p>
+<p>He was very thankful for our report, and also issued a Github
+vulnerability advisory to inform users. A <a
+href="https://hotcrp.com/news/2026/security-notice-202601">new post on
+the HotCRP website</a> also explains more in detail the situation.</p>
