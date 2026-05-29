@@ -8,6 +8,17 @@
 <title>Philipp's Website</title>
 
 <style>
+@font-face {
+    font-family: 'MyFont';
+    src: url('vmware-terminal.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+  }
+
+  body {
+    font-family: 'MyFont', monospace;
+  }
 a {
     text-decoration: none;
 }
@@ -18,13 +29,13 @@ a:hover {
         /*font-family: Arial, sans-serif;*/
         margin: 0;
         padding: 0;
-        text-align: center;
+        text-align: left;
     }
 
     .center-column {
         display: flex;
         flex-direction: column;
-        align-items: center;
+        align-items: left;
         max-width: 800px;
         margin: 0 auto;
         padding: 20px;
@@ -140,8 +151,7 @@ a:hover {
 <div class="publication"> 
 <div class="publication">
         <b>
-	TÄMU: Emulating Trusted Applications at the (GlobalPlatform)-API Layer
-	</b>, <a href="https://sp2026.ieee-security.org/accepted-papers.html"><strong>Oakland'26</strong></a><br/>
+	TÄMU: Emulating Trusted Applications at the (GlobalPlatform)-API Layer</b>, <a href="https://sp2026.ieee-security.org/accepted-papers.html"><strong>Oakland'26</strong></a><br/>
         <em>P. Mao</em>, L. Shi, M. Busch, M. Payer [<a href=https://hexhive.epfl.ch/publications/files/26Oakland.pdf>PDF</a>][<a href=https://github.com/HexHive/taemu>Artifact</a>]
 	</div>   
 	<p></p>
@@ -153,8 +163,7 @@ a:hover {
 <div class="publication">
         <!--<strong onclick="toggleDescription(this)">Exploiting Android’s Hardened Memory Allocator</strong><br/> --!>
         <b>
-	NASS: Fuzzing All Native Android System Services with Interface Awareness and Coverage
-	</b>, <a href="https://www.usenix.org/conference/usenixsecurity25/presentation/mao"><strong>USENIX'25</strong></a><br/>
+	NASS: Fuzzing All Native Android System Services with Interface Awareness and Coverage</b>, <a href="https://www.usenix.org/conference/usenixsecurity25/presentation/mao"><strong>USENIX'25</strong></a><br/>
         <em>P. Mao</em>, M. Busch, M. Payer [<a href=https://www.usenix.org/system/files/usenixsecurity25-mao.pdf>PDF</a>][<a href=https://github.com/HexHive/NASS>Artifact</a>]
 	</div>   
 	<p></p>
@@ -162,8 +171,7 @@ a:hover {
  <div class="publication">
         <!--<strong onclick="toggleDescription(this)">Exploiting Android’s Hardened Memory Allocator</strong><br/> --!>
         <b>
-	Hercules Droidot and the murder on the JNI Express
-	</b>, <a href="https://www.usenix.org/conference/usenixsecurity25/presentation/di-bartolomeo"><strong>USENIX'25</strong></a><br/>
+	Hercules Droidot and the murder on the JNI Express</b>, <a href="https://www.usenix.org/conference/usenixsecurity25/presentation/di-bartolomeo"><strong>USENIX'25</strong></a><br/>
         L, di Bartolomeo <em>P. Mao</em>, Y. Tung, J. Ayala, S. Doria, P. Celada, M. Busch, J. Garcia, E. Losiouk, M. Payer [<a href=https://www.usenix.org/system/files/usenixsecurity25-di-bartolomeo.pdf>PDF</a>][<a href=https://github.com/HexHive/droidot>Artifact</a>]
 	</div>   
 	<p></p>
